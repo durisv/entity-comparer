@@ -21,11 +21,11 @@ public class UserDto
 
 public class UserEvent
 {
-    public string? FullNameTest { get; set; }
-    public int? Age { get; set; }
-    public AddressEvent? Address { get; set; }
-    public string? FlatMap { get; set; }
-    public List<Coll>? Colls2 { get; set; }
+    public string FullNameTest { get; set; }
+    public int Age { get; set; }
+    public AddressEvent Address { get; set; }
+    public string FlatMap { get; set; }
+    public List<Coll> Colls2 { get; set; }
 }
 
 public class Address
