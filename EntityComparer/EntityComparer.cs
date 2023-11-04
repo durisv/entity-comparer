@@ -219,7 +219,14 @@ public class MappingExpression<TSource, TDestination, TDiff> : IMappingExpressio
 
     private static bool IsPropertyTypeIsPrimitive(PropertyInfo diffProperty)
     {
-        return (diffProperty.PropertyType.IsPrimitive || diffProperty.PropertyType == typeof(string));
+        var nullableType = Nullable.GetUnderlyingType(diffProperty.PropertyType);
+        
+        return IsPropertyTypeIsPrimitive(nullableType ?? diffProperty.PropertyType);
+    }
+    
+    private static bool IsPropertyTypeIsPrimitive(Type type)
+    {
+        return (type.IsPrimitive || type == typeof(string));
     }
 
     private static void ComparePrimitiveType(

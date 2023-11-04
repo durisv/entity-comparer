@@ -10,9 +10,9 @@ class Program
 
         mapper.CreateMap<User, UserDto, UserEvent>(map =>
         {
-            map.ForMember(dest => dest.FullNameTest, src => src.FirstName + " " + src.LastName, d => d.FullName);
-            map.ForMember(dest => dest.Colls2, src => src.Colls, src => src.Colls);
-            map.ForMember(dest => dest.FlatMap, src => src.FlatMap.FullName, src => src.FlatMap.FullName);
+            map.ForMember(dest => dest.FullNameTest!, src => src.FirstName + " " + src.LastName, d => d.FullName);
+            map.ForMember(dest => dest.Colls2!, src => src.Colls, src => src.Colls);
+            map.ForMember(dest => dest.FlatMap!, src => src.FlatMap.FullName, src => src.FlatMap.FullName);
         });
         mapper.CreateMap<Address, Address, AddressEvent>(map =>
         {
@@ -32,7 +32,7 @@ class Program
         };
         var req = new UserDto
         {
-            FullName = "John Doe", Age = 7,
+            FullName = "John Doe", Age = 5,
             Address = new Address() { Name = "Bratislava Rustaveliho" },
             Colls = new List<Coll> { new() { Id = 1, ValueEvent = "Test" }, new() { Id = 2, ValueEvent = "Abc" } },
             FlatMap = new FlatMap() { FullName = "Flat Mapping Updated" }
