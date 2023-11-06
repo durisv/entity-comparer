@@ -40,33 +40,21 @@ public class EntityComparer
 
         _mappings[key] = mappingExpression;
     }
-
-    public static Expression<Func<TDestination, object>> CreatePropertyAccessor<TDestination>(string propertyName)
-    {
-        var parameter = Expression.Parameter(typeof(TDestination), "dest");
-        var property = Expression.PropertyOrField(parameter, propertyName);
-
-        var propertyAsObject = Expression.Convert(property, typeof(object));
-        var lambda = Expression.Lambda<Func<TDestination, object>>(propertyAsObject, parameter);
-
-        return lambda;
-    }
-
+    
     public TDiff Map<TSource, TDestination, TDiff>(TSource source, TDestination destination)
     {
         var key = GetMappingKey(typeof(TSource), typeof(TDestination), typeof(TDiff));
         if (_mappings.TryGetValue(key, out var expression))
         {
             var diff = Activator.CreateInstance<TDiff>();
-            expression.Map(source, destination, diff,
-                this); // TODO: This is not good enough, maybe is some null then it will fail or map not null values
+            expression.Map(source, destination, diff,this); // TODO: This is not good enough, maybe is some null then it will fail or map not null values
             return diff;
         }
 
         throw new InvalidOperationException("No mapping configuration exists for these types");
     }
-
-    internal IMappingExpression GetMappingExpression(Type sourceType, Type destinationType, Type diff)
+    
+    public IMappingExpression GetMappingExpression(Type sourceType, Type destinationType, Type diff)
     {
         var key = GetMappingKey(sourceType, destinationType, diff);
         if (_mappings.TryGetValue(key, out var expression))
@@ -77,6 +65,17 @@ public class EntityComparer
         throw new InvalidOperationException("No mapping configuration exists for these types");
     }
 
+    private static Expression<Func<TDestination, object>> CreatePropertyAccessor<TDestination>(string propertyName)
+    {
+        var parameter = Expression.Parameter(typeof(TDestination), "dest");
+        var property = Expression.PropertyOrField(parameter, propertyName);
+
+        var propertyAsObject = Expression.Convert(property, typeof(object));
+        var lambda = Expression.Lambda<Func<TDestination, object>>(propertyAsObject, parameter);
+
+        return lambda;
+    }
+    
     private static string GetMappingKey(Type sourceType, Type destinationType, Type diff) =>
         $"{sourceType.FullName}->{destinationType.FullName}->{diff.FullName}";
 }
@@ -85,13 +84,18 @@ public class PropertyMapping
 {
     public Delegate SourceDelegate { get; set; }
     public Delegate CompareDelegate { get; set; }
+    
+    public string DiffCollectionComparisonTargetKey { get; set; }
+    public Delegate SourceCollectionComparingDelegate { get; set; }
+    public Delegate DestinationCollectionComparingDelegate { get; set; }
 }
 
 public class MappingExpression<TSource, TDestination, TDiff> : IMappingExpression
 {
     private readonly Dictionary<string, PropertyMapping> _propertyMappings = new();
 
-    public void ForMember<TProperty>(Expression<Func<TDiff, object>> diffProperty,
+    public void ForMember<TProperty>(
+        Expression<Func<TDiff, object>> diffProperty,
         Func<TSource, TProperty> propertyMapFunctionSourceProperty,
         Func<TDestination, TProperty> propertyMapFunctionDestinationProperty)
     {
@@ -103,14 +107,32 @@ public class MappingExpression<TSource, TDestination, TDiff> : IMappingExpressio
         };
     }
 
+    public void ForMembers<TDiffProperty, TSourceProperty, TDestinationProperty, TKey>(
+        Expression<Func<TDiff, IEnumerable<TDiffProperty>>> diffProperty,
+        Func<TSource, IEnumerable<TSourceProperty>> sourceCollectionSelector,
+        Func<TDestination, IEnumerable<TDestinationProperty>> destinationCollectionSelector,
+        Expression<Func<TDiffProperty, TKey>> diffKeySelector,
+        Func<TSourceProperty, TKey> sourceKeySelector,
+        Func<TDestinationProperty, TKey> destinationKeySelector)
+    {
+        var memberName = GetMemberName(diffProperty);
+        var diffPropertySelector = GetMemberName(diffKeySelector);
+        _propertyMappings[memberName] = new PropertyMapping()
+        {
+            SourceDelegate = sourceCollectionSelector,
+            CompareDelegate = destinationCollectionSelector,
+            DiffCollectionComparisonTargetKey = diffPropertySelector,
+            SourceCollectionComparingDelegate = sourceKeySelector,
+            DestinationCollectionComparingDelegate = destinationKeySelector
+        };
+    }
+
     public void Map(object source, object destination, object diff, EntityComparer configuration)
     {
-        var diffType = typeof(TDiff);
-
-        foreach (var diffProperty in diffType.GetProperties())
+        foreach (var diffProperty in typeof(TDiff).GetProperties())
         {
             if (IsPropertyTypeIsPrimitive(diffProperty) &&
-                _propertyMappings.TryGetValue(diffProperty.Name, out var mapFunction)) // TODO: is not good enough
+                _propertyMappings.TryGetValue(diffProperty.Name, out var mapFunction))
             {
                 ComparePrimitiveType(source, destination, diff, mapFunction, diffProperty);
             }
@@ -121,29 +143,31 @@ public class MappingExpression<TSource, TDestination, TDiff> : IMappingExpressio
                 var sourceValue = mapFunctionComplexObjects.SourceDelegate.DynamicInvoke(source);
                 var destinationValue = mapFunctionComplexObjects.CompareDelegate.DynamicInvoke(destination);
 
-                if (sourceValue != null && destinationValue != null)
+                if (sourceValue != null && destinationValue != null) // TODO: This is not good enough, source value can be null
                 {
                     if (diffPropertyType.IsGenericType && diffPropertyType.GetGenericTypeDefinition() == typeof(List<>))
                     {
-                        var elementType = diffProperty.PropertyType;
+                        var sourceKeySelector = mapFunctionComplexObjects.SourceCollectionComparingDelegate;
+                        var destinationKeySelector = mapFunctionComplexObjects.DestinationCollectionComparingDelegate;
+                        
                         var sourceArray = (IEnumerable<dynamic>)sourceValue;
                         var destinationArray = (IEnumerable<dynamic>)destinationValue;
 
-                        var genericType = diffProperty.PropertyType.GetGenericArguments()[0];
-                        var listType = typeof(List<>).MakeGenericType(genericType);
+                        var diffGenericType = diffPropertyType.GetGenericArguments()[0];
+                        var listType = typeof(List<>).MakeGenericType(diffGenericType);
                         var diffArray = (IList)Activator.CreateInstance(listType);
 
                         var innerMappingExpression =
                             configuration.GetMappingExpression(
                                 sourceValue.GetType().GetGenericArguments()[0],
                                 destinationValue.GetType().GetGenericArguments()[0],
-                                elementType.GetGenericArguments()[0]);
+                                diffPropertyType.GetGenericArguments()[0]);
 
-                        var result = CompareLists(sourceArray, destinationArray);
+                        var result = CompareLists(sourceArray, destinationArray, sourceKeySelector, destinationKeySelector);
 
                         foreach (var addedObject in result.Added)
                         {
-                            var destinationElement = Activator.CreateInstance(elementType.GetGenericArguments()[0]);
+                            var destinationElement = Activator.CreateInstance(diffPropertyType.GetGenericArguments()[0]);
                             var sourceElement =
                                 Activator.CreateInstance(sourceValue.GetType().GetGenericArguments()[0]);
                             innerMappingExpression.Map(sourceElement, addedObject, destinationElement, configuration);
@@ -151,14 +175,18 @@ public class MappingExpression<TSource, TDestination, TDiff> : IMappingExpressio
                             diffArray.Add(destinationElement);
                         }
 
-                        foreach (var item in result.Modified)
+                        foreach (var destModified in result.Modified)
                         {
-                            var sourceElement = destinationArray.FirstOrDefault(x => x.Id == item.Id);
+                            var sourceElement = sourceArray.FirstOrDefault(src => sourceKeySelector.DynamicInvoke(src) == destinationKeySelector.DynamicInvoke(destModified));
 
                             if (innerMappingExpression != null && sourceElement != null)
                             {
-                                var destinationElement = Activator.CreateInstance(elementType.GetGenericArguments()[0]);
-                                innerMappingExpression.Map(sourceElement, item, destinationElement, configuration);
+                                var destinationElement = Activator.CreateInstance(diffPropertyType.GetGenericArguments()[0]);
+                                innerMappingExpression.Map(sourceElement, destModified, destinationElement, configuration);
+
+                                var member = mapFunctionComplexObjects.DiffCollectionComparisonTargetKey;
+                                PropertyInfo propertyInfo = diffPropertyType.GetGenericArguments()[0].GetProperty(member);
+                                propertyInfo.SetValue(destinationElement, destinationKeySelector.DynamicInvoke(destModified));
 
                                 diffArray.Add(destinationElement);
                             }
@@ -166,48 +194,16 @@ public class MappingExpression<TSource, TDestination, TDiff> : IMappingExpressio
 
                         diffProperty.SetValue(diff, diffArray);
                     }
-                    // Check if it's an array
-                    // else if (diffProperty.PropertyType.IsArray && sourceProp.PropertyType.IsArray)
-                    // {
-                    //     var elementType = diffProperty.PropertyType.GetElementType();
-                    //     var sourceArray = (Array)sourceValue;
-                    //     var destinationArray = (Array)newValue;
-                    //     var diffArray = Array.CreateInstance(elementType, sourceArray.Length);
-                    //
-                    //     var innerMappingExpression =
-                    //         configuration.GetMappingExpression(
-                    //             sourceProp.PropertyType.GetElementType(),
-                    //             destinationProp.PropertyType.GetElementType(),
-                    //             elementType);
-                    //
-                    //     for (int i = 0; i < sourceArray.Length; i++)
-                    //     {
-                    //         var sourceElement = sourceArray.GetValue(i);
-                    //         if (innerMappingExpression != null && sourceElement != null)
-                    //         {
-                    //             var destinationElement = Activator.CreateInstance(elementType);
-                    //             innerMappingExpression.Map(sourceElement, destinationElement, elementType, configuration);
-                    //             diffArray.SetValue(destinationElement, i);
-                    //         }
-                    //         else
-                    //         {
-                    //             diffArray.SetValue(sourceElement,
-                    //                 i); // If there's no specific mapping, just assign the value
-                    //         }
-                    //     }
-                    //
-                    //     diffProperty.SetValue(diff, diffArray);
-                    // }
                     else // Handle other complex properties
                     {
                         var innerMappingExpression =
                             configuration.GetMappingExpression(
                                 sourceValue.GetType(),
                                 destinationValue.GetType(),
-                                diffProperty.PropertyType);
+                                diffPropertyType);
 
 
-                        var diffValue = Activator.CreateInstance(diffProperty.PropertyType);
+                        var diffValue = Activator.CreateInstance(diffPropertyType);
 
                         innerMappingExpression.Map(sourceValue, destinationValue, diffValue!, configuration);
                         diffProperty.SetValue(diff, diffValue);
@@ -226,7 +222,13 @@ public class MappingExpression<TSource, TDestination, TDiff> : IMappingExpressio
     
     private static bool IsPropertyTypeIsPrimitive(Type type)
     {
-        return (type.IsPrimitive || type == typeof(string));
+        return (type.IsPrimitive ||
+                type.IsEnum ||
+                type == typeof(string) ||
+                type == typeof(DateTime) ||
+                type == typeof(DateTimeOffset) ||
+                type == typeof(TimeOnly) ||
+                type == typeof(Guid));
     }
 
     private static void ComparePrimitiveType(
@@ -269,10 +271,10 @@ public class MappingExpression<TSource, TDestination, TDiff> : IMappingExpressio
         public IEnumerable<dynamic> Modified { get; set; }
     }
 
-    private static ComparisonResult CompareLists(IEnumerable<dynamic> oldList, IEnumerable<dynamic> newList)
+    private static ComparisonResult CompareLists(IEnumerable<dynamic> source, IEnumerable<dynamic> destination, Delegate sourceKeySelector, Delegate destinationKeySelector)
     {
-        var added = newList.ExceptBy(oldList.Select(x => x.Id), o => o.Id);
-        var modified = newList.Where(x => oldList.Any(o => o.Id == x.Id));
+        var added = destination.Where(dst => source.All(src => destinationKeySelector.DynamicInvoke(dst) != sourceKeySelector.DynamicInvoke(src)));
+        var modified = destination.Where(dst => source.Any(src => destinationKeySelector.DynamicInvoke(dst) == sourceKeySelector.DynamicInvoke(src)));
 
         return new ComparisonResult
         {

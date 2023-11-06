@@ -5,7 +5,7 @@ public class User
     public string FirstName { get; set; }
     public string LastName { get; set; }
     public int Age { get; set; }
-    public Address Address { get; set; }
+    public Address? Address { get; set; }
     public FlatMap FlatMap { get; set; }
     public List<Coll> Colls { get; set; }
 }
@@ -14,12 +14,12 @@ public class UserDto
 {
     public string FullName { get; set; }
     public int Age { get; set; }
-    public Address Address { get; set; }
+    public Address? Address { get; set; }
     public FlatMap FlatMap { get; set; }
     public List<Coll> Colls { get; set; }
 }
 
-public class UserEvent
+public record UserEvent
 {
     public string? FullNameTest { get; set; }
     public int? Age { get; set; }

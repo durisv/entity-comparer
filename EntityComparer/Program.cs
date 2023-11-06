@@ -11,7 +11,13 @@ class Program
         mapper.CreateMap<User, UserDto, UserEvent>(map =>
         {
             map.ForMember(dest => dest.FullNameTest!, src => src.FirstName + " " + src.LastName, d => d.FullName);
-            map.ForMember(dest => dest.Colls2!, src => src.Colls, src => src.Colls);
+            map.ForMembers(
+                dest => dest.Colls2!, 
+                src => src.Colls, 
+                src => src.Colls, 
+                src => src.Id,
+                src => src.Id, 
+                d => d.Id);
             map.ForMember(dest => dest.FlatMap!, src => src.FlatMap.FullName, src => src.FlatMap.FullName);
         });
         mapper.CreateMap<Address, Address, AddressEvent>(map =>
